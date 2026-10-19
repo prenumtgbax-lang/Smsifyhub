@@ -15,54 +15,34 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Check ZIP File
+      - name: Find and Extract ZIP
         run: |
-          echo "Checking project ZIP..."
-
-          find . -type f -name "*.zip"
-
-          ZIP_FILE=$(find . -type f \
-            -name "SMSIFYHUB_Mobile_Build_Ready.zip" \
-            -print -quit)
+          ZIP_FILE=$(find . -type f -name "SMSIFYHUB_Mobile_Build_Ready.zip" -print -quit)
 
           if [ -z "$ZIP_FILE" ]; then
-            echo "::error::SMSIFYHUB_Mobile_Build_Ready.zip was not found."
+            echo "ERROR: SMSIFYHUB_Mobile_Build_Ready.zip not found in repository"
             exit 1
           fi
 
-          echo "ZIP_FILE=$ZIP_FILE" >> "$GITHUB_ENV"
-          echo "Found: $ZIP_FILE"
+          mkdir -p source
+          unzip -q "$ZIP_FILE" -d source
 
-      - name: Extract Android Project
+          echo "ZIP extracted successfully"
+          find source -maxdepth 5 -type f | head -n 100
+
+      - name: Locate Android Project
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y unzip
-
-          mkdir -p "$GITHUB_WORKSPACE/source"
-          unzip -q "$ZIP_FILE" -d "$GITHUB_WORKSPACE/source"
-
-          echo "Extract completed."
-          find "$GITHUB_WORKSPACE/source" \
-            -maxdepth 5 -type f | head -n 150
-
-      - name: Locate Gradle Project
-        run: |
-          ROOT="$GITHUB_WORKSPACE/source"
-
-          SETTINGS=$(find "$ROOT" -type f \
+          PROJECT_FILE=$(find source -type f \
             \( -name "settings.gradle" -o -name "settings.gradle.kts" \) \
             -print -quit)
 
-          if [ -z "$SETTINGS" ]; then
-            echo "::error::No settings.gradle or settings.gradle.kts found in ZIP."
-            echo "The ZIP may not contain an Android Gradle project."
+          if [ -z "$PROJECT_FILE" ]; then
+            echo "ERROR: Android Gradle project not found inside ZIP"
             exit 1
           fi
 
-          PROJECT_DIR=$(dirname "$SETTINGS")
-
+          PROJECT_DIR=$(dirname "$PROJECT_FILE")
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
-          echo "Found Android project: $PROJECT_DIR"
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
@@ -73,40 +53,22 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
 
-      - name: Build Debug APK
+      - name: Build APK
         run: |
           cd "$PROJECT_DIR"
 
           if [ -f "./gradlew" ]; then
             chmod +x ./gradlew
             ./gradlew assembleDebug
-          elif [ -f "build.gradle" ] || [ -f "build.gradle.kts" ]; then
-            gradle assembleDebug
           else
-            echo "::error::Gradle build file not found."
+            echo "ERROR: gradlew not found in Android project"
             exit 1
           fi
 
-      - name: Find APK
-        run: |
-          find "$PROJECT_DIR" -type f -name "*.apk"
-
-          APK=$(find "$PROJECT_DIR" -type f \
-            -path "*/build/outputs/apk/debug/*.apk" \
-            -print -quit)
-
-          if [ -z "$APK" ]; then
-            echo "::error::APK was not generated."
-            exit 1
-          fi
-
-          echo "APK_PATH=$APK" >> "$GITHUB_ENV"
-          echo "APK ready: $APK"
-
-      - name: Upload APK Artifact
+      - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: SMSIFYHUB-APK
-          path: ${{ env.APK_PATH }}
+          path: source/**/build/outputs/apk/debug/*.apk
           if-no-files-found: error
           retention-days: 7
