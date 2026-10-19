@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
   push:
     paths:
-      - "SMSIFYHUB_Mobile_Build_Ready.zip"
+      - "SMSIFYHUB_Android_Project.zip"
       - ".github/workflows/main.yml"
 
 permissions:
@@ -26,38 +26,63 @@ jobs:
 
       - name: Extract Android Project
         run: |
-          ZIP_FILE="SMSIFYHUB_Mobile_Build_Ready.zip"
+          ZIP_FILE="SMSIFYHUB_Android_Project.zip"
 
           if [ ! -f "$ZIP_FILE" ]; then
-            ZIP_FILE=$(find . -maxdepth 2 -name "*.zip" -print -quit)
-          fi
-
-          if [ -z "$ZIP_FILE" ] || [ ! -f "$ZIP_FILE" ]; then
-            echo "ERROR: Project ZIP not found"
+            echo "ERROR: $ZIP_FILE not found in repository root"
+            echo "Available ZIP files:"
+            find . -maxdepth 3 -type f -iname "*.zip"
             exit 1
           fi
 
           mkdir -p android-project
           unzip -q "$ZIP_FILE" -d android-project
 
-          PROJECT_DIR=$(find android-project -name settings.gradle.kts -printf '%h\n' | head -n 1)
+          PROJECT_DIR=$(find android-project -type f \
+            \( -name settings.gradle.kts -o -name settings.gradle \) \
+            -printf '%h\n' | head -n 1)
 
           if [ -z "$PROJECT_DIR" ]; then
-            echo "ERROR: settings.gradle.kts not found"
+            echo "ERROR: settings.gradle.kts or settings.gradle not found"
             exit 1
           fi
 
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+
+          echo "Android project found at: $PROJECT_DIR"
 
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "8.9"
 
+      - name: Fix accidental literal newline in settings.gradle.kts
+        run: |
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+
+          project = Path(os.environ["PROJECT_DIR"])
+
+          for name in ("settings.gradle.kts", "settings.gradle"):
+              file = project / name
+              if file.exists():
+                  text = file.read_text(encoding="utf-8")
+                  text = text.replace(r"\n", "\n")
+                  file.write_text(text, encoding="utf-8")
+                  print(f"Checked and fixed literal \\n in {file}")
+          PY
+
       - name: Build Debug APK
         run: |
           cd "$PROJECT_DIR"
-          gradle assembleDebug --no-daemon
+
+          if [ -f "./gradlew" ]; then
+            chmod +x ./gradlew
+            ./gradlew assembleDebug --no-daemon
+          else
+            gradle assembleDebug --no-daemon
+          fi
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
