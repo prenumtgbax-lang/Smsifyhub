@@ -25,57 +25,95 @@ jobs:
           java-version: "17"
 
       - name: Extract Android Project
+        shell: bash
         run: |
+          set -e
+
           ZIP_FILE="SMSIFYHUB_Android_Project.zip"
 
           if [ ! -f "$ZIP_FILE" ]; then
-            echo "ERROR: $ZIP_FILE not found in repository root"
-            echo "Available ZIP files:"
+            echo "ERROR: ZIP file not found: $ZIP_FILE"
+            echo "ZIP files available:"
             find . -maxdepth 3 -type f -iname "*.zip"
             exit 1
           fi
 
           mkdir -p android-project
-          unzip -q "$ZIP_FILE" -d android-project
+          unzip -oq "$ZIP_FILE" -d android-project
 
-          PROJECT_DIR=$(find android-project -type f \
-            \( -name settings.gradle.kts -o -name settings.gradle \) \
-            -printf '%h\n' | head -n 1)
+          PROJECT_DIR=""
+
+          while IFS= read -r file; do
+            if grep -qE '^[[:space:]]*include[[:space:]]*\(?["'\'']?:app' "$file" 2>/dev/null; then
+              PROJECT_DIR="$(dirname "$file")"
+              break
+            fi
+          done < <(
+            find android-project -type f \
+              \( -name "settings.gradle.kts" -o -name "settings.gradle" \)
+          )
 
           if [ -z "$PROJECT_DIR" ]; then
-            echo "ERROR: settings.gradle.kts or settings.gradle not found"
+            echo "ERROR: Android settings.gradle file not found"
+            find android-project -maxdepth 5 -type f
             exit 1
           fi
 
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+          echo "Android project: $PROJECT_DIR"
 
-          echo "Android project found at: $PROJECT_DIR"
-
-      - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: "8.9"
-
-      - name: Fix accidental literal newline in settings.gradle.kts
+      - name: Fix Accidental Literal Newlines
+        shell: bash
         run: |
+          set -e
+
           python3 - <<'PY'
           import os
           from pathlib import Path
 
           project = Path(os.environ["PROJECT_DIR"])
 
-          for name in ("settings.gradle.kts", "settings.gradle"):
-              file = project / name
-              if file.exists():
-                  text = file.read_text(encoding="utf-8")
-                  text = text.replace(r"\n", "\n")
-                  file.write_text(text, encoding="utf-8")
-                  print(f"Checked and fixed literal \\n in {file}")
+          gradle_names = {
+              "settings.gradle",
+              "settings.gradle.kts",
+              "build.gradle",
+              "build.gradle.kts",
+          }
+
+          for file in project.rglob("*"):
+              if not file.is_file() or file.name not in gradle_names:
+                  continue
+
+              original = file.read_text(encoding="utf-8")
+              fixed = original.replace("\\r\\n", "\n")
+              fixed = fixed.replace("\\n", "\n")
+
+              if fixed != original:
+                  file.write_text(fixed, encoding="utf-8")
+                  print(f"FIXED: {file}")
+              else:
+                  print(f"CHECKED: {file}")
           PY
 
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.9"
+
       - name: Build Debug APK
+        shell: bash
         run: |
+          set -e
           cd "$PROJECT_DIR"
+
+          echo "Checking Android project..."
+
+          if [ ! -f "app/build.gradle.kts" ] && \
+             [ ! -f "app/build.gradle" ]; then
+            echo "ERROR: app/build.gradle or app/build.gradle.kts not found"
+            find . -maxdepth 4 -type f
+            exit 1
+          fi
 
           if [ -f "./gradlew" ]; then
             chmod +x ./gradlew
@@ -88,5 +126,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: SMSIFYHUB-APK
-          path: android-project/**/app/build/outputs/apk/debug/*.apk
+          path: |
+            android-project/**/build/outputs/apk/debug/*.apk
           if-no-files-found: error
+          retention-days: 7
