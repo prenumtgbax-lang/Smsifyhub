@@ -1,4 +1,4 @@
-name: Build SMSIFYHUB APK
+error: Build SMSIFYHUB APK
 
 on:
   workflow_dispatch:
