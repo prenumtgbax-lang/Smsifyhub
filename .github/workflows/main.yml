@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
   push:
     paths:
-      - "SMSIFYHUB_Android_Project.zip"
+      - "SMSIFYHUB_Android_Project_FIXED.zip"
       - ".github/workflows/main.yml"
 
 permissions:
@@ -15,57 +15,68 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      # 1. Checkout Repository
       - name: Checkout Repository
         uses: actions/checkout@v4
 
+      # 2. Setup JDK 17
       - name: Setup JDK 17
         uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: "17"
 
+      # 3. Extract Android Project
       - name: Extract Android Project
         shell: bash
         run: |
-          set -e
+          set -euo pipefail
 
-          ZIP_FILE="SMSIFYHUB_Android_Project.zip"
+          ZIP_FILE="SMSIFYHUB_Android_Project_FIXED.zip"
 
           if [ ! -f "$ZIP_FILE" ]; then
             echo "ERROR: ZIP file not found: $ZIP_FILE"
-            echo "ZIP files available:"
-            find . -maxdepth 3 -type f -iname "*.zip"
+            echo "Available ZIP files:"
+            find . -maxdepth 4 -type f -iname "*.zip" || true
             exit 1
           fi
 
           mkdir -p android-project
           unzip -oq "$ZIP_FILE" -d android-project
 
+          echo "Searching for Android Gradle project..."
+
           PROJECT_DIR=""
 
-          while IFS= read -r file; do
-            if grep -qE '^[[:space:]]*include[[:space:]]*\(?["'\'']?:app' "$file" 2>/dev/null; then
+          while IFS= read -r -d '' file; do
+            if grep -Eq 'include[[:space:]]*[(]?[[:space:]]*["'\'']?:app["'\'']?' "$file"; then
               PROJECT_DIR="$(dirname "$file")"
               break
             fi
           done < <(
             find android-project -type f \
-              \( -name "settings.gradle.kts" -o -name "settings.gradle" \)
+              \( -name "settings.gradle.kts" -o -name "settings.gradle" \) \
+              -print0
           )
 
           if [ -z "$PROJECT_DIR" ]; then
             echo "ERROR: Android settings.gradle file not found"
-            find android-project -maxdepth 5 -type f
+            echo "Extracted files:"
+            find android-project -maxdepth 5 -type f | head -200
             exit 1
           fi
 
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
-          echo "Android project: $PROJECT_DIR"
 
+          echo "Android project directory: $PROJECT_DIR"
+          echo "Project files:"
+          ls -la "$PROJECT_DIR"
+
+      # 4. Fix Accidental Literal Newlines in Gradle Files
       - name: Fix Accidental Literal Newlines
         shell: bash
         run: |
-          set -e
+          set -euo pipefail
 
           python3 - <<'PY'
           import os
@@ -81,10 +92,15 @@ jobs:
           }
 
           for file in project.rglob("*"):
-              if not file.is_file() or file.name not in gradle_names:
+              if not file.is_file():
+                  continue
+
+              if file.name not in gradle_names:
                   continue
 
               original = file.read_text(encoding="utf-8")
+
+              # Convert accidental literal escape sequences.
               fixed = original.replace("\\r\\n", "\n")
               fixed = fixed.replace("\\n", "\n")
 
@@ -95,33 +111,55 @@ jobs:
                   print(f"CHECKED: {file}")
           PY
 
+      # 5. Setup Gradle
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "8.9"
 
+      # 6. Build Debug APK
       - name: Build Debug APK
         shell: bash
         run: |
-          set -e
+          set -euo pipefail
+
           cd "$PROJECT_DIR"
 
           echo "Checking Android project..."
 
           if [ ! -f "app/build.gradle.kts" ] && \
              [ ! -f "app/build.gradle" ]; then
-            echo "ERROR: app/build.gradle or app/build.gradle.kts not found"
-            find . -maxdepth 4 -type f
+            echo "ERROR: Android app module Gradle file not found."
+            echo "Expected app/build.gradle.kts or app/build.gradle"
+            find . -maxdepth 5 -type f | head -200
             exit 1
           fi
 
+          echo "Checking Gradle wrapper..."
+
           if [ -f "./gradlew" ]; then
             chmod +x ./gradlew
+            ./gradlew --version
             ./gradlew assembleDebug --no-daemon
           else
+            echo "Gradle wrapper not found. Using installed Gradle."
             gradle assembleDebug --no-daemon
           fi
 
+          echo "Searching for generated APK..."
+
+          APK_COUNT=$(find . -type f \
+            -path "*/build/outputs/apk/debug/*.apk" | wc -l)
+
+          if [ "$APK_COUNT" -eq 0 ]; then
+            echo "ERROR: APK was not generated."
+            exit 1
+          fi
+
+          find . -type f \
+            -path "*/build/outputs/apk/debug/*.apk" -print
+
+      # 7. Upload APK
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
