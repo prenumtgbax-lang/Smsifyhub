@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
   push:
     paths:
-      - "SMSIFYHUB_Android_Project_FIXED.zip"
+      - "smsifyhub_android_project_fixed (1).zip"
       - ".github/workflows/main.yml"
 
 permissions:
@@ -32,7 +32,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          ZIP_FILE="SMSIFYHUB_Android_Project_FIXED.zip"
+          smsifyhub_android_project_fixed (1).zip"
 
           if [ ! -f "$ZIP_FILE" ]; then
             echo "ERROR: ZIP file not found: $ZIP_FILE"
