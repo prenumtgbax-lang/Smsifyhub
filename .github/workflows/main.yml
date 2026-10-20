@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
   push:
     paths:
-      - "smsifyhub_android_project_fixed (2).zip"
+      - "SMSIFYHUB-main-yml.zip"
       - ".github/workflows/main.yml"
 
 permissions:
@@ -19,7 +19,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Setup JDK 17
-        uses: actions/setup-java@v5
+        uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "17"
@@ -29,11 +29,12 @@ jobs:
         run: |
           set -euo pipefail
 
-          ZIP_FILE="smsifyhub_android_project_fixed (2).zip"
+          ZIP_FILE="SMSIFYHUB-main-yml.zip"
 
           if [ ! -f "$ZIP_FILE" ]; then
             echo "ERROR: ZIP file not found: $ZIP_FILE"
-            find . -maxdepth 3 -type f -iname "*.zip"
+            echo "ZIP files available in repository:"
+            find . -maxdepth 4 -type f -iname '*.zip' -print || true
             exit 1
           fi
 
@@ -41,66 +42,51 @@ jobs:
           unzip -oq "$ZIP_FILE" -d android-project
 
           PROJECT_DIR=""
-
-          while IFS= read -r -d '' file; do
-            candidate="$(dirname "$file")"
-
-            if [ -f "$candidate/app/build.gradle.kts" ] || \
-               [ -f "$candidate/app/build.gradle" ]; then
+          while IFS= read -r -d '' settings_file; do
+            candidate="$(dirname "$settings_file")"
+            if [ -f "$candidate/app/build.gradle.kts" ] || [ -f "$candidate/app/build.gradle" ]; then
               PROJECT_DIR="$candidate"
               break
             fi
-          done < <(
-            find android-project -type f \
-              \( -name "settings.gradle.kts" -o -name "settings.gradle" \) \
-              -print0
-          )
+          done < <(find android-project -type f \( -name 'settings.gradle.kts' -o -name 'settings.gradle' \) -print0)
 
           if [ -z "$PROJECT_DIR" ]; then
-            echo "ERROR: Android project not found inside ZIP"
-            find android-project -maxdepth 5 -type f
+            echo "ERROR: Android Gradle project not found in ZIP."
+            find android-project -maxdepth 6 -type f | head -200
             exit 1
           fi
 
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
-
-          echo "Project found: $PROJECT_DIR"
-
-      - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: "8.9"
+          echo "Android project directory: $PROJECT_DIR"
+          ls -la "$PROJECT_DIR"
 
       - name: Build SMSIFYHUB APK
         shell: bash
         run: |
           set -euo pipefail
-
           cd "$PROJECT_DIR"
 
-          if [ -f "./gradlew" ]; then
+          if [ -f "gradlew" ]; then
             chmod +x ./gradlew
-            ./gradlew assembleDebug --no-daemon
+            ./gradlew assembleDebug --no-daemon --stacktrace
           else
-            gradle assembleDebug --no-daemon
+            echo "ERROR: Gradle wrapper (gradlew) is missing from the Android project."
+            exit 1
           fi
 
-          APK_FILE="$(find app/build/outputs/apk/debug \
-            -type f -name "*.apk" -print -quit)"
-
+          APK_FILE="$(find app/build/outputs/apk/debug -maxdepth 1 -type f -name '*.apk' -print -quit 2>/dev/null || true)"
           if [ -z "$APK_FILE" ]; then
-            echo "ERROR: APK file was not generated"
+            echo "ERROR: Debug APK was not generated."
             exit 1
           fi
 
           cp "$APK_FILE" "$GITHUB_WORKSPACE/smsifyhubv2.apk"
+          echo "APK created: smsifyhubv2.apk"
 
-          echo "APK created successfully: smsifyhubv2.apk"
-
-      - name: Upload APK
+      - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: smsifyhubv2
+          name: SMSIFYHUB-APK
           path: smsifyhubv2.apk
           if-no-files-found: error
           retention-days: 7
