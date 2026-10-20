@@ -4,7 +4,8 @@ on:
   workflow_dispatch:
   push:
     paths:
-      - "smsifyhub_android_project_fixed (1).zip"
+      - "*.zip"
+      - "**/*.zip"
       - ".github/workflows/main.yml"
 
 permissions:
@@ -32,25 +33,38 @@ jobs:
         run: |
           set -euo pipefail
 
-          smsifyhub_android_project_fixed (1).zip"
+          # Prefer the expected fixed ZIP name; otherwise find an SMSIFYHUB ZIP.
+          ZIP_FILE=""
+          if [ -f "SMSIFYHUB_Android_Project_FIXED.zip" ]; then
+            ZIP_FILE="SMSIFYHUB_Android_Project_FIXED.zip"
+          else
+            ZIP_FILE="$(find . -maxdepth 4 -type f \
+              -iname '*smsifyhub*.zip' \
+              -not -path './android-project/*' \
+              -print -quit)"
+          fi
 
-          if [ ! -f "$ZIP_FILE" ]; then
-            echo "ERROR: ZIP file not found: $ZIP_FILE"
-            echo "Available ZIP files:"
-            find . -maxdepth 4 -type f -iname "*.zip" || true
+          if [ -z "$ZIP_FILE" ] || [ ! -f "$ZIP_FILE" ]; then
+            echo "ERROR: Could not find an SMSIFYHUB ZIP file."
+            echo "ZIP files available in repository:"
+            find . -maxdepth 4 -type f -iname "*.zip" -print || true
             exit 1
           fi
+
+          echo "Using ZIP file: $ZIP_FILE"
 
           mkdir -p android-project
           unzip -oq "$ZIP_FILE" -d android-project
 
           echo "Searching for Android Gradle project..."
-
           PROJECT_DIR=""
 
-          while IFS= read -r -d '' file; do
-            if grep -Eq 'include[[:space:]]*[(]?[[:space:]]*["'\'']?:app["'\'']?' "$file"; then
-              PROJECT_DIR="$(dirname "$file")"
+          while IFS= read -r -d '' settings_file; do
+            candidate="$(dirname "$settings_file")"
+
+            if [ -f "$candidate/app/build.gradle.kts" ] || \
+               [ -f "$candidate/app/build.gradle" ]; then
+              PROJECT_DIR="$candidate"
               break
             fi
           done < <(
@@ -60,19 +74,17 @@ jobs:
           )
 
           if [ -z "$PROJECT_DIR" ]; then
-            echo "ERROR: Android settings.gradle file not found"
+            echo "ERROR: Could not locate a valid Android project."
             echo "Extracted files:"
-            find android-project -maxdepth 5 -type f | head -200
+            find android-project -maxdepth 6 -type f | head -200
             exit 1
           fi
 
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
-
           echo "Android project directory: $PROJECT_DIR"
-          echo "Project files:"
           ls -la "$PROJECT_DIR"
 
-      # 4. Fix Accidental Literal Newlines in Gradle Files
+      # 4. Fix accidental literal newline sequences in Gradle files only
       - name: Fix Accidental Literal Newlines
         shell: bash
         run: |
@@ -92,15 +104,10 @@ jobs:
           }
 
           for file in project.rglob("*"):
-              if not file.is_file():
-                  continue
-
-              if file.name not in gradle_names:
+              if not file.is_file() or file.name not in gradle_names:
                   continue
 
               original = file.read_text(encoding="utf-8")
-
-              # Convert accidental literal escape sequences.
               fixed = original.replace("\\r\\n", "\n")
               fixed = fixed.replace("\\n", "\n")
 
@@ -122,42 +129,32 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-
           cd "$PROJECT_DIR"
 
           echo "Checking Android project..."
 
           if [ ! -f "app/build.gradle.kts" ] && \
              [ ! -f "app/build.gradle" ]; then
-            echo "ERROR: Android app module Gradle file not found."
-            echo "Expected app/build.gradle.kts or app/build.gradle"
+            echo "ERROR: app/build.gradle(.kts) not found."
             find . -maxdepth 5 -type f | head -200
             exit 1
           fi
 
-          echo "Checking Gradle wrapper..."
-
           if [ -f "./gradlew" ]; then
             chmod +x ./gradlew
-            ./gradlew --version
             ./gradlew assembleDebug --no-daemon
           else
-            echo "Gradle wrapper not found. Using installed Gradle."
+            echo "Gradle wrapper not found; using installed Gradle."
             gradle assembleDebug --no-daemon
           fi
 
-          echo "Searching for generated APK..."
+          echo "Checking generated APK..."
+          find . -type f -path "*/build/outputs/apk/debug/*.apk" -print
 
-          APK_COUNT=$(find . -type f \
-            -path "*/build/outputs/apk/debug/*.apk" | wc -l)
-
-          if [ "$APK_COUNT" -eq 0 ]; then
-            echo "ERROR: APK was not generated."
+          if ! find . -type f -path "*/build/outputs/apk/debug/*.apk" -print -quit | grep -q .; then
+            echo "ERROR: Build finished but no debug APK was found."
             exit 1
           fi
-
-          find . -type f \
-            -path "*/build/outputs/apk/debug/*.apk" -print
 
       # 7. Upload APK
       - name: Upload APK
