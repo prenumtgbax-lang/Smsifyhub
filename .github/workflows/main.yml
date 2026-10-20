@@ -33,20 +33,17 @@ jobs:
 
           if [ ! -f "$ZIP_FILE" ]; then
             echo "ERROR: ZIP file not found: $ZIP_FILE"
-            echo "Available ZIP files:"
-            find . -maxdepth 4 -type f -iname "*.zip" -print || true
+            find . -maxdepth 3 -type f -iname "*.zip"
             exit 1
           fi
-
-          echo "Using ZIP: $ZIP_FILE"
 
           mkdir -p android-project
           unzip -oq "$ZIP_FILE" -d android-project
 
           PROJECT_DIR=""
 
-          while IFS= read -r -d '' settings_file; do
-            candidate="$(dirname "$settings_file")"
+          while IFS= read -r -d '' file; do
+            candidate="$(dirname "$file")"
 
             if [ -f "$candidate/app/build.gradle.kts" ] || \
                [ -f "$candidate/app/build.gradle" ]; then
@@ -60,85 +57,45 @@ jobs:
           )
 
           if [ -z "$PROJECT_DIR" ]; then
-            echo "ERROR: Android Gradle project not found."
-            find android-project -maxdepth 6 -type f | head -200
+            echo "ERROR: Android project not found inside ZIP"
+            find android-project -maxdepth 5 -type f
             exit 1
           fi
 
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
-          echo "Android project: $PROJECT_DIR"
 
-      - name: Fix Accidental Literal Newlines
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          python3 - <<'PY'
-          import os
-          from pathlib import Path
-
-          project = Path(os.environ["PROJECT_DIR"])
-
-          gradle_names = {
-              "settings.gradle",
-              "settings.gradle.kts",
-              "build.gradle",
-              "build.gradle.kts",
-          }
-
-          for file in project.rglob("*"):
-              if not file.is_file() or file.name not in gradle_names:
-                  continue
-
-              original = file.read_text(encoding="utf-8")
-              fixed = original.replace("\\r\\n", "\n")
-              fixed = fixed.replace("\\n", "\n")
-
-              if fixed != original:
-                  file.write_text(fixed, encoding="utf-8")
-                  print(f"FIXED: {file}")
-              else:
-                  print(f"CHECKED: {file}")
-          PY
+          echo "Project found: $PROJECT_DIR"
 
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "8.9"
 
-      - name: Build Debug APK
+      - name: Build SMSIFYHUB APK
         shell: bash
         run: |
           set -euo pipefail
 
           cd "$PROJECT_DIR"
 
-          if [ ! -f "app/build.gradle.kts" ] && \
-             [ ! -f "app/build.gradle" ]; then
-            echo "ERROR: App Gradle file not found."
-            exit 1
-          fi
-
           if [ -f "./gradlew" ]; then
             chmod +x ./gradlew
             ./gradlew assembleDebug --no-daemon
           else
-            echo "Gradle wrapper not found; using installed Gradle."
             gradle assembleDebug --no-daemon
           fi
 
-          APK_FILE="$(find . -type f \
-            -path "*/build/outputs/apk/debug/*.apk" \
-            -print -quit)"
+          APK_FILE="$(find app/build/outputs/apk/debug \
+            -type f -name "*.apk" -print -quit)"
 
           if [ -z "$APK_FILE" ]; then
-            echo "ERROR: APK was not generated."
+            echo "ERROR: APK file was not generated"
             exit 1
           fi
 
           cp "$APK_FILE" "$GITHUB_WORKSPACE/smsifyhubv2.apk"
 
-          echo "Final APK: smsifyhubv2.apk"
+          echo "APK created successfully: smsifyhubv2.apk"
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
