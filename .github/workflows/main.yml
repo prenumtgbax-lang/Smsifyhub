@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
   push:
     paths:
-      - "smsifyhub_android_project_fixed (1).zip"
+      - "smsifyhub_android_project_fixed.zip"
       - ".github/workflows/main.yml"
 
 permissions:
@@ -15,30 +15,33 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      # 1. Checkout Repository
       - name: Checkout Repository
         uses: actions/checkout@v4
 
+      # 2. Setup JDK 17
       - name: Setup JDK 17
         uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: "17"
 
+      # 3. Extract Android Project
       - name: Extract Android Project
         shell: bash
         run: |
           set -euo pipefail
 
-          ZIP_FILE="smsifyhub_android_project_fixed (1).zip"
+          ZIP_FILE="smsifyhub_android_project_fixed.zip"
 
           if [ ! -f "$ZIP_FILE" ]; then
             echo "ERROR: ZIP file not found: $ZIP_FILE"
-            echo "ZIP files available in repository:"
+            echo "Available ZIP files:"
             find . -maxdepth 4 -type f -iname "*.zip" -print || true
             exit 1
           fi
 
-          echo "Using ZIP file: $ZIP_FILE"
+          echo "Using ZIP: $ZIP_FILE"
 
           mkdir -p android-project
           unzip -oq "$ZIP_FILE" -d android-project
@@ -60,15 +63,15 @@ jobs:
           )
 
           if [ -z "$PROJECT_DIR" ]; then
-            echo "ERROR: Android Gradle project not found in ZIP."
+            echo "ERROR: Android Gradle project not found."
             find android-project -maxdepth 6 -type f | head -200
             exit 1
           fi
 
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
-          echo "Android project directory: $PROJECT_DIR"
-          ls -la "$PROJECT_DIR"
+          echo "Android project: $PROJECT_DIR"
 
+      # 4. Fix Accidental Literal Newlines
       - name: Fix Accidental Literal Newlines
         shell: bash
         run: |
@@ -102,21 +105,25 @@ jobs:
                   print(f"CHECKED: {file}")
           PY
 
+      # 5. Setup Gradle
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "8.9"
 
+      # 6. Build APK
       - name: Build Debug APK
         shell: bash
         run: |
           set -euo pipefail
+
           cd "$PROJECT_DIR"
+
+          echo "Checking Android project..."
 
           if [ ! -f "app/build.gradle.kts" ] && \
              [ ! -f "app/build.gradle" ]; then
-            echo "ERROR: app/build.gradle(.kts) not found."
-            find . -maxdepth 5 -type f | head -200
+            echo "ERROR: App Gradle file not found."
             exit 1
           fi
 
@@ -129,20 +136,26 @@ jobs:
           fi
 
           APK_FILE="$(find . -type f \
-            -path "*/build/outputs/apk/debug/*.apk" -print -quit)"
+            -path "*/build/outputs/apk/debug/*.apk" \
+            -print -quit)"
 
           if [ -z "$APK_FILE" ]; then
-            echo "ERROR: No debug APK was generated."
+            echo "ERROR: APK was not generated."
             exit 1
           fi
 
           echo "APK generated: $APK_FILE"
 
+          # Rename the generated APK to smsifyhubv2.apk
+          cp "$APK_FILE" "$GITHUB_WORKSPACE/smsifyhubv2.apk"
+
+          echo "Final APK: smsifyhubv2.apk"
+
+      # 7. Upload APK
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: SMSIFYHUB-APK
-          path: |
-            android-project/**/build/outputs/apk/debug/*.apk
+          name: smsifyhubv2
+          path: smsifyhubv2.apk
           if-no-files-found: error
           retention-days: 7
